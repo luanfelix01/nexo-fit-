@@ -1,0 +1,9 @@
+{
+  "name":"NEXO FIT",
+  "short_name":"NEXO FIT",
+  "start_url":"./",
+  "display":"standalone",
+  "background_color":"#080d0a",
+  "theme_color":"#a8ff3e",
+  "description":"Rastreamento de treinos com GPS e mapas."
+}
