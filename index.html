@@ -20,7 +20,8 @@
 @media(min-width:560px){body{padding:18px 0}.app{border:1px solid #233126;border-radius:28px;overflow:hidden;min-height:calc(100vh - 36px);min-height:calc(100dvh - 36px)}.nav{bottom:18px;border-radius:0 0 28px 28px}}
 </style><link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY=" crossorigin=""/>
 <style>
-#satmap{position:absolute;inset:0;display:none;z-index:1;background:#101810}
+#satmap{position:absolute;inset:0;display:block;z-index:1;background:#101810}
+#routecanvas{display:none!important}
 #satmap .leaflet-control-attribution{font-size:8px}
 .mapcontrols{position:absolute;right:10px;top:10px;z-index:3;display:flex;gap:6px}
 .mapcontrols button{background:#080d0be8;color:#dce8dc;border:1px solid #354638;border-radius:9px;padding:8px 10px;font-size:10px;font-weight:800}
@@ -41,7 +42,7 @@
 <div class="headrow"><h3>Atividades recentes</h3><small>Seu histórico</small></div><div class="card" id="recent"><div class="empty">Seu primeiro treino está esperando por você.</div></div>
 </section>
 <section class="screen" id="track"><div class="eyebrow">Modo atividade</div><h1 class="h1" id="tracktitle">Corrida</h1><p class="muted">O registro GPS funciona sem internet em aparelhos compatíveis. O desenho do percurso e os pontos ficam salvos localmente.</p>
-<div class="mapbox"><canvas id="routecanvas" aria-label="Visualização local do percurso"></canvas><div id="satmap" aria-label="Mapa satélite"></div><div class="mapcontrols"><button id="mapmode" type="button">MAPA SATÉLITE</button><button id="recenter" type="button" title="Centralizar localização">⌖</button></div><div class="maplabel" id="maplabel">ROTA LOCAL</div><div class="gpsbadge" id="gpsstatus">◉ Aguardando início</div></div>
+<div class="mapbox"><canvas id="routecanvas" aria-label="Visualização local do percurso"></canvas><div id="satmap" aria-label="Mapa real com ruas e satélite"></div><div class="mapcontrols"><button id="roadmode" type="button" class="active">RUAS</button><button id="mapmode" type="button">SATÉLITE</button><button id="recenter" type="button" title="Centralizar localização">⌖</button></div><div class="maplabel" id="maplabel">MAPA DE RUAS • ONLINE</div><div class="gpsbadge" id="gpsstatus">◉ Aguardando início</div></div>
 <div class="trackstats"><div class="trackstat"><span>DISTÂNCIA</span><b><span id="distance">0,00</span> <small>km</small></b></div><div class="trackstat"><span>TEMPO</span><b id="elapsed">00:00</b></div><div class="trackstat"><span>RITMO MÉDIO</span><b id="pace">— <small>/km</small></b></div><div class="trackstat"><span>VELOCIDADE</span><b id="speed">0,0 <small>km/h</small></b></div></div>
 <div class="row"><button class="btn" id="pause">Ⅱ &nbsp; PAUSAR</button><button class="btn secondary" id="finish">■ &nbsp; FINALIZAR</button></div><button class="btn secondary" id="cancel">Cancelar e descartar</button>
 <p class="notice">Importante: GPS requer permissão do sistema e costuma ser mais preciso ao ar livre. Em navegadores móveis, o sistema pode suspender o rastreamento quando a tela fica bloqueada; teste com o seu aparelho. Este MVP não substitui um app nativo para GPS contínuo em segundo plano.</p></section>
@@ -78,6 +79,7 @@
 </main>
 <nav class="nav"><button class="active" data-screen="home"><span>⌂</span>Início</button><button data-screen="track"><span>◎</span>Treinar</button><button data-screen="history"><span>▤</span>Histórico</button><button data-screen="profile"><span>♙</span>Perfil</button></nav>
 <div class="toast" id="toast"></div></div>
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=" crossorigin=""></script>
 <script>
 const $=id=>document.getElementById(id),DATA='nexofit_pro_activities',PROF='nexofit_pro_profile';
 let activities=[],profile={name:'',goal:3},sport='Corrida',active=false,paused=false,startAt=0,elapsedBefore=0,timer=null,watch=null,meters=0,points=[],last=null;
@@ -86,26 +88,32 @@ const fmt=n=>Number(n).toLocaleString('pt-BR',{minimumFractionDigits:1,maximumFr
 const clock=s=>{s=Math.max(0,Math.floor(s));return String(Math.floor(s/60)).padStart(2,'0')+':'+String(s%60).padStart(2,'0')};
 function toast(t){$('toast').textContent=t;$('toast').style.display='block';setTimeout(()=>$('toast').style.display='none',2600)}
 function persist(){localStorage.setItem(DATA,JSON.stringify(activities))}
-function screen(id){document.querySelectorAll('.screen').forEach(x=>x.classList.toggle('active',x.id===id));document.querySelectorAll('[data-screen]').forEach(x=>x.classList.toggle('active',x.dataset.screen===id));if(id==='history')renderLists();if(id==='track')drawRoute()}
+function screen(id){document.querySelectorAll('.screen').forEach(x=>x.classList.toggle('active',x.id===id));document.querySelectorAll('[data-screen]').forEach(x=>x.classList.toggle('active',x.dataset.screen===id));if(id==='history')renderLists();if(id==='track'){drawRoute();initSatelliteMap();setTimeout(()=>satelliteMap&&satelliteMap.invalidateSize(),150)}}
 document.querySelectorAll('[data-screen]').forEach(b=>b.onclick=()=>screen(b.dataset.screen));
 document.querySelectorAll('[data-sport]').forEach(b=>b.onclick=()=>{if(active)return;sport=b.dataset.sport;document.querySelectorAll('[data-sport]').forEach(x=>x.classList.toggle('active',x===b))});
-let satelliteMap=null,satelliteLayer=null,routeLine=null,currentMarker=null,mapMode='local',lastPosition=null;
+let satelliteMap=null,satelliteLayer=null,roadLayer=null,routeLine=null,currentMarker=null,mapMode='road',lastPosition=null;
 function initSatelliteMap(){
  if(satelliteMap||!window.L)return;
  satelliteMap=L.map('satmap',{zoomControl:true,preferCanvas:true}).setView([-8.0,-35.0],13);
- satelliteLayer=L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}',{maxZoom:19,attribution:'Tiles © Esri — Sources: Esri, Maxar, Earthstar Geographics'}).addTo(satelliteMap);
+ roadLayer=L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',{maxZoom:19,attribution:'© OpenStreetMap contributors',crossOrigin:true}).addTo(satelliteMap);
  routeLine=L.polyline([],{color:'#a8ff3e',weight:5,opacity:.95}).addTo(satelliteMap);
  currentMarker=L.circleMarker([-8.0,-35.0],{radius:6,color:'#f4ffe8',weight:2,fillColor:'#a8ff3e',fillOpacity:1}).addTo(satelliteMap);
 }
 function setMapMode(mode){
- mapMode=mode;
+ mapMode=mode;initSatelliteMap();
  const sat=mode==='satellite';
- $('satmap').style.display=sat?'block':'none';$('routecanvas').style.display=sat?'none':'block';
- $('mapmode').classList.toggle('active',sat);$('mapmode').textContent=sat?'VOLTAR AO TRAÇADO':'MAPA SATÉLITE';
- $('maplabel').textContent=sat?'IMAGENS DE SATÉLITE • ONLINE':'TRAÇADO GPS';
- if(sat){initSatelliteMap();if(satelliteMap){setTimeout(()=>satelliteMap.invalidateSize(),100);if(lastPosition)satelliteMap.setView([lastPosition.lat,lastPosition.lng],17);}}
+ $('satmap').style.display='block';$('routecanvas').style.display='none';
+ $('roadmode').classList.toggle('active',!sat);$('mapmode').classList.toggle('active',sat);
+ $('maplabel').textContent=sat?'IMAGENS DE SATÉLITE • ONLINE':'MAPA DE RUAS • ONLINE';
+ if(satelliteMap){
+  if(roadLayer){satelliteMap.removeLayer(roadLayer);roadLayer=null}if(satelliteLayer){satelliteMap.removeLayer(satelliteLayer);satelliteLayer=null}
+  satelliteLayer=L.tileLayer(sat?'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}':'https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',{maxZoom:19,attribution:sat?'Tiles © Esri':'© OpenStreetMap contributors'}).addTo(satelliteMap);
+  setTimeout(()=>satelliteMap.invalidateSize(),120);
+  if(lastPosition)satelliteMap.setView([lastPosition.lat,lastPosition.lng],17);
+  if(routeLine)routeLine.setLatLngs(points.map(q=>[q.lat,q.lng]));
+ }
 }
-$('mapmode').onclick=()=>setMapMode(mapMode==='satellite'?'local':'satellite');
+$('roadmode').onclick=()=>setMapMode('road');
 $('recenter').onclick=()=>{if(lastPosition&&satelliteMap)satelliteMap.setView([lastPosition.lat,lastPosition.lng],17);else if(lastPosition)toast('Localização recebida; abra o mapa satélite para centralizar.');else toast('Aguardando uma posição GPS válida.')};
 $('start').onclick=()=>begin();
 function begin(){
@@ -114,6 +122,7 @@ function begin(){
  $('tracktitle').textContent=sport+' em andamento';$('gpsstatus').textContent=sport==='Academia'?'● Cronômetro ativo • sem GPS':'◉ Ativando GPS…';
  $('pause').textContent='Ⅱ PAUSAR';screen('track');if(timer)clearInterval(timer);timer=setInterval(update,1000);drawRoute();
  if(sport!=='Academia'){
+  initSatelliteMap();setTimeout(()=>satelliteMap&&satelliteMap.invalidateSize(),150);
   if(!navigator.geolocation){$('gpsstatus').textContent='Este navegador não oferece geolocalização.';toast('GPS não disponível neste navegador.');return}
   if(!window.isSecureContext){$('gpsstatus').textContent='GPS exige HTTPS. Abra o site publicado no GitHub Pages.';toast('Abra o NEXO FIT pelo link HTTPS.');return}
   $('gpsstatus').textContent='Solicitando primeira posição GPS…';
@@ -129,11 +138,22 @@ function onGPS(pos){
  const p={lat:pos.coords.latitude,lng:pos.coords.longitude,t:pos.timestamp||Date.now(),acc:pos.coords.accuracy||999};
  if(!Number.isFinite(p.lat)||!Number.isFinite(p.lng))return;
  lastPosition=p;
- if(p.acc>100){$('gpsstatus').textContent='Precisão GPS baixa ('+Math.round(p.acc)+' m); buscando sinal melhor…';return}
- if(last){const d=distance(last,p),dt=(p.t-last.t)/1000;if(dt>0&&d>=1.2&&d<250){meters+=d;points.push({lat:p.lat,lng:p.lng});saveLive()}}
- else{points.push({lat:p.lat,lng:p.lng});saveLive()}
- last=p;$('gpsstatus').textContent='GPS ativo • precisão ±'+Math.round(p.acc)+' m';
- if(satelliteMap&&mapMode==='satellite'){const ll=[p.lat,p.lng];currentMarker.setLatLng(ll);routeLine.setLatLngs(points.map(q=>[q.lat,q.lng]));if(points.length===1)satelliteMap.setView(ll,17);else if(points.length%5===0)satelliteMap.panTo(ll,{animate:false})}
+ if(p.acc>50){$('gpsstatus').textContent='Precisão GPS baixa ('+Math.round(p.acc)+' m); aguardando sinal melhor…';return}
+ if(last){
+  const d=distance(last,p),dt=(p.t-last.t)/1000;
+  // Reject duplicate fixes, GPS jumps and physically implausible speeds.
+  const speed=dt>0?d/dt:Infinity;
+  const minMove=Math.max(2,Math.min(5,p.acc*0.25));
+  if(dt>0&&d>=minMove&&d<100&&speed<(sport==='Ciclismo'?25:12)){
+   meters+=d;points.push({lat:p.lat,lng:p.lng,t:p.t,acc:p.acc});saveLive();last=p;
+  } else if(dt>0&&d<100&&speed<(sport==='Ciclismo'?25:12)&&d<minMove){
+   // Keep the previous accepted fix so small GPS jitter does not erase real movement.
+  } else if(d>=100||speed>=(sport==='Ciclismo'?25:12)){
+   $('gpsstatus').textContent='Salto de GPS ignorado; estabilizando sinal…';return;
+  }
+ } else {points.push({lat:p.lat,lng:p.lng,t:p.t,acc:p.acc});saveLive();last=p}
+ $('gpsstatus').textContent='GPS ativo • precisão ±'+Math.round(p.acc)+' m';
+ if(satelliteMap){const ll=[p.lat,p.lng];currentMarker.setLatLng(ll);routeLine.setLatLngs(points.map(q=>[q.lat,q.lng]));if(points.length===1)satelliteMap.setView(ll,17);else if(points.length%5===0)satelliteMap.panTo(ll,{animate:false})}
  drawRoute();update();
 }
 function saveLive(){try{localStorage.setItem('nexofit_live_activity',JSON.stringify({sport,meters,points,seconds:seconds(),date:new Date().toISOString()}))}catch(e){}}
@@ -190,7 +210,7 @@ function downloadBlob(blob,name){if(!blob){toast('Não foi possível gerar a ima
 $('sharebtn').onclick=shareWorkout;$('saveimage').onclick=async()=>{if(!lastFinished){toast('Finalize um treino primeiro.');return}const c=await htmlCardImage(lastFinished);c.toBlob(blob=>downloadBlob(blob,'nexo-fit-treino.png'),'image/png')};$('newworkout').onclick=()=>{screen('home');toast('Escolha sua próxima atividade!')};
 $('saveprofile').onclick=()=>{profile={name:$('name').value.trim(),goal:Number($('goal').value)};localStorage.setItem(PROF,JSON.stringify(profile));refresh();toast('Perfil salvo!')};
 $('export').onclick=()=>{const blob=new Blob([JSON.stringify({app:'NEXO FIT',exportedAt:new Date().toISOString(),profile,activities},null,2)],{type:'application/json'}),url=URL.createObjectURL(blob),a=document.createElement('a');a.href=url;a.download='nexo-fit-backup.json';a.click();URL.revokeObjectURL(url)};
-$('clear').onclick=()=>{if(confirm('Apagar todos os treinos guardados neste aparelho?')){activities=[];persist();refresh();toast('Histórico apagado')}};window.addEventListener('resize',()=>{drawRoute();if(lastFinished)drawShareRoute(lastFinished)});
+$('clear').onclick=()=>{if(confirm('Apagar todos os treinos guardados neste aparelho?')){activities=[];persist();refresh();toast('Histórico apagado')}};window.addEventListener('resize',()=>{drawRoute();if(satelliteMap)satelliteMap.invalidateSize();if(lastFinished)drawShareRoute(lastFinished)});
 function net(){const online=navigator.onLine;$('netstatus').textContent=online?'● PRONTO':'● OFFLINE';$('netstatus').style.color=online?'var(--lime)':'var(--blue)'}window.addEventListener('online',net);window.addEventListener('offline',net);net();refresh();drawRoute();
 if('serviceWorker'in navigator&&/^https?:$/.test(location.protocol))window.addEventListener('load',()=>navigator.serviceWorker.register('./sw.js').catch(()=>{}));
 </script></body></html>
