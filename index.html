@@ -46,7 +46,15 @@
 <div class="sharecard" id="sharecard">
   <div class="sharebrand"><span class="sharemark">N</span><span>NEXO FIT</span><span class="sharepill">TREINO CONCLUÍDO</span></div>
   <div class="shareheadline" id="shareheadline">Atividade concluída</div>
-  <div class="sharemap" id="sharemap"><canvas id="sharecanvas"></canvas><span class="sharemaptag">MEU PERCURSO</span></div>
+  <div class="sharemap" id="sharemap" style="position:relative;overflow:hidden">
+  <canvas id="sharecanvas" style="display:none"></canvas>
+  <div id="summarymap" style="position:absolute;inset:0;background:#101810"></div>
+  <div class="mapcontrols" style="position:absolute;z-index:1000;right:8px;top:8px">
+    <button id="summaryRoad" type="button" class="active">RUAS</button>
+    <button id="summarySatellite" type="button">SATÉLITE</button>
+  </div>
+  <span class="sharemaptag" style="z-index:1001">PERCURSO GPS</span>
+</div>
   <div class="sharemetrics">
     <div><small>DISTÂNCIA</small><strong id="sumdistance">0,00 <i>km</i></strong></div>
     <div><small>DURAÇÃO</small><strong id="sumtime">00:00</strong></div>
@@ -136,7 +144,40 @@ function renderLists(){$('historylist').innerHTML=activities.length?activities.m
 function refresh(){const km=activities.reduce((n,a)=>n+(a.meters||0),0)/1000,sec=activities.reduce((n,a)=>n+(a.seconds||0),0);$('totalKm').textContent=fmt(km);$('totalTime').textContent=Math.round(sec/60)+' min';$('totalCount').textContent=activities.length;$('goalText').textContent=Math.min(activities.length,profile.goal)+' / '+profile.goal+' treinos';$('goalBar').style.width=Math.min(100,activities.length/profile.goal*100)+'%';$('greeting').innerHTML=profile.name?'Olá, '+profile.name+'.<br>Vamos evoluir?':'Seu próximo nível<br>começa hoje.';$('name').value=profile.name||'';$('goal').value=String(profile.goal||3);renderLists()}
 
 function drawShareRoute(a){const c=$('sharecanvas');if(!c)return;const box=c.getBoundingClientRect(),dpr=Math.min(window.devicePixelRatio||1,2);c.width=Math.max(1,box.width*dpr);c.height=Math.max(1,box.height*dpr);const ctx=c.getContext('2d');ctx.scale(dpr,dpr);const w=box.width,h=box.height;ctx.fillStyle='#0a110c';ctx.fillRect(0,0,w,h);ctx.strokeStyle='#1b2b1e';ctx.lineWidth=1;for(let x=-h;x<w+h;x+=24){ctx.beginPath();ctx.moveTo(x,0);ctx.lineTo(x+h,h);ctx.stroke()}for(let y=12;y<h;y+=24){ctx.beginPath();ctx.moveTo(0,y);ctx.lineTo(w,y);ctx.stroke()}const pts=(a.points||[]).filter(p=>Number.isFinite(p.lat)&&Number.isFinite(p.lng));if(pts.length>1){let minLat=Math.min(...pts.map(p=>p.lat)),maxLat=Math.max(...pts.map(p=>p.lat)),minLng=Math.min(...pts.map(p=>p.lng)),maxLng=Math.max(...pts.map(p=>p.lng));if(maxLat-minLat<.0001){maxLat+=.0005;minLat-=.0005}if(maxLng-minLng<.0001){maxLng+=.0005;minLng-=.0005}const pad=24,scale=Math.min((w-pad*2)/(maxLng-minLng),(h-pad*2)/(maxLat-minLat));const xy=p=>[w/2+(p.lng-(minLng+maxLng)/2)*scale,h/2-(p.lat-(minLat+maxLat)/2)*scale];ctx.beginPath();pts.forEach((p,i)=>{const [x,y]=xy(p);i?ctx.lineTo(x,y):ctx.moveTo(x,y)});ctx.strokeStyle='#a8ff3e';ctx.lineWidth=3;ctx.lineCap='round';ctx.lineJoin='round';ctx.shadowColor='#a8ff3e';ctx.shadowBlur=9;ctx.stroke();ctx.shadowBlur=0;const [x,y]=xy(pts[pts.length-1]);ctx.fillStyle='#a8ff3e';ctx.beginPath();ctx.arc(x,y,4,0,Math.PI*2);ctx.fill()}else{ctx.fillStyle='#879b88';ctx.font='10px system-ui';ctx.textAlign='center';ctx.fillText('PERCURSO NÃO REGISTRADO',w/2,h/2+3)}}
-function renderSummary(a){if(!a)return;$('summarydate').textContent=new Date(a.date).toLocaleDateString('pt-BR',{weekday:'long',day:'numeric',month:'long',year:'numeric'});$('shareheadline').textContent=(a.sport==='Academia'?'Treino de academia concluído':a.sport+' concluída');$('sumdistance').innerHTML=fmt((a.meters||0)/1000)+' <i>km</i>';$('sumtime').textContent=clock(a.seconds||0);const km=(a.meters||0)/1000;$('sumpace').innerHTML=km>.03?fmt((a.seconds||0)/60/km)+' <i>/km</i>':'—';$('sumtype').textContent=icon(a.sport)+' '+a.sport.toUpperCase();requestAnimationFrame(()=>drawShareRoute(a))}
+let summaryMap=null,summaryLayer=null,summaryRoute=null,summaryStart=null,summaryMode='road';
+function initSummaryMap(a){
+ if(!window.L){$('summarymap').innerHTML='<div style="padding:40px 16px;color:#a8b5a8;text-align:center">Mapa indisponível. Verifique a internet e recarregue a página.</div>';return}
+ if(!summaryMap){
+  summaryMap=L.map('summarymap',{zoomControl:true,attributionControl:true}).setView([-8.0,-35.0],13);
+  summaryLayer=L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',{maxZoom:19,attribution:'© OpenStreetMap contributors'}).addTo(summaryMap);
+  summaryRoute=L.polyline([],{color:'#a8ff3e',weight:5,opacity:.95}).addTo(summaryMap);
+  summaryStart=L.circleMarker([-8.0,-35.0],{radius:6,color:'#f7fff0',weight:2,fillColor:'#a8ff3e',fillOpacity:1}).addTo(summaryMap);
+ }
+ setTimeout(()=>summaryMap.invalidateSize(),150);
+ const pts=(a&&a.points||[]).filter(p=>Number.isFinite(p.lat)&&Number.isFinite(p.lng));
+ if(pts.length){
+  const ll=pts.map(p=>[p.lat,p.lng]);summaryRoute.setLatLngs(ll);summaryStart.setLatLng(ll[0]);
+  if(ll.length>1)summaryMap.fitBounds(summaryRoute.getBounds().pad(.18),{maxZoom:17});else summaryMap.setView(ll[0],16);
+ }else{
+  summaryRoute.setLatLngs([]);
+  if(lastPosition)summaryMap.setView([lastPosition.lat,lastPosition.lng],16);
+  $('summarymap').insertAdjacentHTML('beforeend','<div id="nomaproute" style="position:absolute;z-index:500;left:50%;top:50%;transform:translate(-50%,-50%);background:#080d0be8;color:#dce8dc;border:1px solid #354638;border-radius:10px;padding:10px 12px;font-size:12px;white-space:nowrap">Nenhum percurso GPS registrado</div>');
+ }
+}
+function setSummaryMapMode(mode){
+ summaryMode=mode;
+ if(!summaryMap)return;
+ const url=mode==='satellite'
+  ?'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}'
+  :'https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png';
+ if(summaryLayer)summaryMap.removeLayer(summaryLayer);
+ summaryLayer=L.tileLayer(url,{maxZoom:19,attribution:mode==='satellite'?'Tiles © Esri':'© OpenStreetMap contributors'}).addTo(summaryMap);
+ $('summaryRoad').classList.toggle('active',mode==='road');$('summarySatellite').classList.toggle('active',mode==='satellite');
+ setTimeout(()=>summaryMap.invalidateSize(),100);
+}
+$('summaryRoad').onclick=()=>setSummaryMapMode('road');
+$('summarySatellite').onclick=()=>setSummaryMapMode('satellite');
+function renderSummary(a){if(!a)return;initSummaryMap(a);$('summarydate').textContent=new Date(a.date).toLocaleDateString('pt-BR',{weekday:'long',day:'numeric',month:'long',year:'numeric'});$('shareheadline').textContent=(a.sport==='Academia'?'Treino de academia concluído':a.sport+' concluída');$('sumdistance').innerHTML=fmt((a.meters||0)/1000)+' <i>km</i>';$('sumtime').textContent=clock(a.seconds||0);const km=(a.meters||0)/1000;$('sumpace').innerHTML=km>.03?fmt((a.seconds||0)/60/km)+' <i>/km</i>':'—';$('sumtype').textContent=icon(a.sport)+' '+a.sport.toUpperCase();requestAnimationFrame(()=>drawShareRoute(a))}
 async function shareWorkout(){if(!lastFinished){toast('Finalize um treino primeiro.');return}const card=$('sharecard');try{const canvas=await htmlCardImage(lastFinished);const blob=await new Promise(resolve=>canvas.toBlob(resolve,'image/png'));if(blob&&navigator.share&&navigator.canShare){const file=new File([blob],'nexo-fit-treino.png',{type:'image/png'});if(navigator.canShare({files:[file]})){await navigator.share({title:'Meu treino no NEXO FIT',text:'Mais que treinos. É o seu próximo nível.',files:[file]});return}}downloadBlob(blob||await new Blob([JSON.stringify(lastFinished)],{type:'application/json'}),'nexo-fit-treino.png');toast('Imagem preparada para salvar.')}catch(e){toast('Não foi possível abrir o compartilhamento neste navegador. Use Salvar imagem.')}}
 function htmlCardImage(a){return new Promise(resolve=>{const c=document.createElement('canvas');c.width=1080;c.height=1350;const x=c.getContext('2d');const grad=x.createLinearGradient(0,0,1080,1350);grad.addColorStop(0,'#17251a');grad.addColorStop(1,'#080d0a');x.fillStyle=grad;x.fillRect(0,0,1080,1350);x.fillStyle='#a8ff3e';x.fillRect(64,64,66,66);x.fillStyle='#10170b';x.font='900 45px Arial';x.fillText('N',80,112);x.fillStyle='#f3f7f2';x.font='900 38px Arial';x.fillText('NEXO FIT',150,109);x.fillStyle='#a8ff3e';x.font='bold 22px Arial';x.fillText('TREINO CONCLUÍDO',64,195);x.fillStyle='#f3f7f2';x.font='900 64px Arial';x.fillText(a.sport==='Academia'?'Treino concluído.':a.sport+' concluída.',64,300);x.fillStyle='#a8ff3e';x.font='900 62px Arial';x.fillText('Orgulho conquistado.',64,375);x.fillStyle='#0a110c';x.fillRect(64,430,952,390);x.strokeStyle='#1b2b1e';x.lineWidth=2;for(let xx=64;xx<1016;xx+=35){x.beginPath();x.moveTo(xx,430);x.lineTo(xx+390,820);x.stroke()}const pts=(a.points||[]).filter(p=>Number.isFinite(p.lat)&&Number.isFinite(p.lng));if(pts.length>1){let minLat=Math.min(...pts.map(p=>p.lat)),maxLat=Math.max(...pts.map(p=>p.lat)),minLng=Math.min(...pts.map(p=>p.lng)),maxLng=Math.max(...pts.map(p=>p.lng));if(maxLat-minLat<.0001){maxLat+=.0005;minLat-=.0005}if(maxLng-minLng<.0001){maxLng+=.0005;minLng-=.0005}const pad=100,scale=Math.min((952-pad*2)/(maxLng-minLng),(390-pad*2)/(maxLat-minLat));x.beginPath();pts.forEach((p,i)=>{const xx=540+(p.lng-(minLng+maxLng)/2)*scale,yy=625-(p.lat-(minLat+maxLat)/2)*scale;i?x.lineTo(xx,yy):x.moveTo(xx,yy)});x.strokeStyle='#a8ff3e';x.lineWidth=8;x.lineCap='round';x.lineJoin='round';x.stroke()}else{x.fillStyle='#879b88';x.font='24px Arial';x.textAlign='center';x.fillText('PERCURSO NÃO REGISTRADO',540,630);x.textAlign='left'}x.fillStyle='#a8b5a8';x.font='bold 22px Arial';x.fillText('DISTÂNCIA',64,910);x.fillText('DURAÇÃO',430,910);x.fillText('RITMO MÉDIO',750,910);x.fillStyle='#f3f7f2';x.font='900 50px Arial';x.fillText(fmt((a.meters||0)/1000)+' km',64,980);x.fillText(clock(a.seconds||0),430,980);const km=(a.meters||0)/1000;x.fillText(km>.03?fmt((a.seconds||0)/60/km)+'/km':'—',750,980);x.strokeStyle='#344633';x.beginPath();x.moveTo(64,1040);x.lineTo(1016,1040);x.stroke();x.fillStyle='#a8ff3e';x.font='900 24px Arial';x.fillText(icon(a.sport)+'  '+a.sport.toUpperCase(),64,1100);x.fillStyle='#c3d1c2';x.font='bold 20px Arial';x.fillText(new Date(a.date).toLocaleDateString('pt-BR'),64,1150);x.fillStyle='#879b88';x.font='bold 18px Arial';x.fillText('MAIS QUE TREINOS. É O SEU PRÓXIMO NÍVEL.',64,1260);resolve(c)})}
 function downloadBlob(blob,name){if(!blob){toast('Não foi possível gerar a imagem.');return}const url=URL.createObjectURL(blob),a=document.createElement('a');a.href=url;a.download=name;a.click();setTimeout(()=>URL.revokeObjectURL(url),1500)}
