@@ -12,7 +12,16 @@
 .sharecard{margin-top:18px;padding:20px;border-radius:18px;background:#0b0f0c;border:1px solid #263029;overflow:hidden;position:relative;box-shadow:none}
 .sharebrand{display:flex;align-items:center;gap:8px;font-size:13px;font-weight:950;letter-spacing:1.3px}.sharemark{width:26px;height:26px;border-radius:7px;background:var(--lime);color:#10170b;display:grid;place-items:center;font-size:16px}.sharepill{margin-left:auto;color:#7f8b81;font-size:8px;letter-spacing:.7px}.shareheadline{font-size:17px;line-height:1.2;font-weight:650;letter-spacing:-.2px;margin:20px 0 13px;color:#dce4dd}.shareheadline em{font-style:normal;color:#dce4dd}.sharemap{height:138px;border:1px solid #263029;border-radius:10px;overflow:hidden;position:relative;background:#090d0a}.sharemap canvas{width:100%;height:100%;display:block}.sharemaptag{position:absolute;top:8px;left:8px;background:#080d0bdc;border:0;border-radius:4px;padding:5px 6px;font-size:8px;color:#a8ff3e;letter-spacing:.7px}.sharemetrics{display:grid;grid-template-columns:1.15fr 1fr 1fr;gap:8px;padding:17px 0 14px}.sharemetrics>div{min-width:0}.sharemetrics small{font-size:8px;color:#829087;letter-spacing:.6px;display:block;margin-bottom:7px}.sharemetrics strong{font-size:18px;letter-spacing:-.7px;white-space:nowrap}.sharemetrics strong i{font-size:10px;font-style:normal;color:var(--muted);letter-spacing:0}.sharefoot{display:flex;justify-content:space-between;gap:8px;padding-top:11px;border-top:1px solid #263029;color:#87948a;font-size:8px;font-weight:700;letter-spacing:.6px}.sharefoot span:first-child{color:#a8ff3e}
 @media(min-width:560px){body{padding:18px 0}.app{border:1px solid #233126;border-radius:28px;overflow:hidden;min-height:calc(100dvh - 36px)}.nav{bottom:18px;border-radius:0 0 28px 28px}}
-</style></head>
+</style><link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY=" crossorigin=""/>
+<style>
+#satmap{position:absolute;inset:0;display:none;z-index:1;background:#101810}
+#satmap .leaflet-control-attribution{font-size:8px}
+.mapcontrols{position:absolute;right:10px;top:10px;z-index:3;display:flex;gap:6px}
+.mapcontrols button{background:#080d0be8;color:#dce8dc;border:1px solid #354638;border-radius:9px;padding:8px 10px;font-size:10px;font-weight:800}
+.mapcontrols button.active{background:#a8ff3e;color:#11180b;border-color:#a8ff3e}
+#routecanvas{position:relative;z-index:0}
+</style>
+</head>
 <body><div class="app">
 <header class="top"><div class="brand"><div class="mark">N</div>NEXO FIT</div><span class="status" id="netstatus">● PRONTO</span></header>
 <main>
@@ -26,7 +35,7 @@
 <div class="headrow"><h3>Atividades recentes</h3><small>Seu histórico</small></div><div class="card" id="recent"><div class="empty">Seu primeiro treino está esperando por você.</div></div>
 </section>
 <section class="screen" id="track"><div class="eyebrow">Modo atividade</div><h1 class="h1" id="tracktitle">Corrida</h1><p class="muted">O registro GPS funciona sem internet em aparelhos compatíveis. O desenho do percurso e os pontos ficam salvos localmente.</p>
-<div class="mapbox"><canvas id="routecanvas" aria-label="Visualização local do percurso"></canvas><div class="maplabel" id="maplabel">ROTA LOCAL • OFFLINE</div><div class="gpsbadge" id="gpsstatus">◉ Aguardando início</div></div>
+<div class="mapbox"><canvas id="routecanvas" aria-label="Visualização local do percurso"></canvas><div id="satmap" aria-label="Mapa satélite"></div><div class="mapcontrols"><button id="mapmode" type="button">MAPA SATÉLITE</button><button id="recenter" type="button" title="Centralizar localização">⌖</button></div><div class="maplabel" id="maplabel">ROTA LOCAL</div><div class="gpsbadge" id="gpsstatus">◉ Aguardando início</div></div>
 <div class="trackstats"><div class="trackstat"><span>DISTÂNCIA</span><b><span id="distance">0,00</span> <small>km</small></b></div><div class="trackstat"><span>TEMPO</span><b id="elapsed">00:00</b></div><div class="trackstat"><span>RITMO MÉDIO</span><b id="pace">— <small>/km</small></b></div><div class="trackstat"><span>VELOCIDADE</span><b id="speed">0,0 <small>km/h</small></b></div></div>
 <div class="row"><button class="btn" id="pause">Ⅱ &nbsp; PAUSAR</button><button class="btn secondary" id="finish">■ &nbsp; FINALIZAR</button></div><button class="btn secondary" id="cancel">Cancelar e descartar</button>
 <p class="notice">Importante: GPS requer permissão do sistema e costuma ser mais preciso ao ar livre. Em navegadores móveis, o sistema pode suspender o rastreamento quando a tela fica bloqueada; teste com o seu aparelho. Este MVP não substitui um app nativo para GPS contínuo em segundo plano.</p></section>
@@ -66,15 +75,57 @@ function persist(){localStorage.setItem(DATA,JSON.stringify(activities))}
 function screen(id){document.querySelectorAll('.screen').forEach(x=>x.classList.toggle('active',x.id===id));document.querySelectorAll('[data-screen]').forEach(x=>x.classList.toggle('active',x.dataset.screen===id));if(id==='history')renderLists();if(id==='track')drawRoute()}
 document.querySelectorAll('[data-screen]').forEach(b=>b.onclick=()=>screen(b.dataset.screen));
 document.querySelectorAll('[data-sport]').forEach(b=>b.onclick=()=>{if(active)return;sport=b.dataset.sport;document.querySelectorAll('[data-sport]').forEach(x=>x.classList.toggle('active',x===b))});
+let satelliteMap=null,satelliteLayer=null,routeLine=null,currentMarker=null,mapMode='local',lastPosition=null;
+function initSatelliteMap(){
+ if(satelliteMap||!window.L)return;
+ satelliteMap=L.map('satmap',{zoomControl:true,preferCanvas:true}).setView([-8.0,-35.0],13);
+ satelliteLayer=L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}',{maxZoom:19,attribution:'Tiles © Esri — Sources: Esri, Maxar, Earthstar Geographics'}).addTo(satelliteMap);
+ routeLine=L.polyline([],{color:'#a8ff3e',weight:5,opacity:.95}).addTo(satelliteMap);
+ currentMarker=L.circleMarker([-8.0,-35.0],{radius:6,color:'#f4ffe8',weight:2,fillColor:'#a8ff3e',fillOpacity:1}).addTo(satelliteMap);
+}
+function setMapMode(mode){
+ mapMode=mode;
+ const sat=mode==='satellite';
+ $('satmap').style.display=sat?'block':'none';$('routecanvas').style.display=sat?'none':'block';
+ $('mapmode').classList.toggle('active',sat);$('mapmode').textContent=sat?'VOLTAR AO TRAÇADO':'MAPA SATÉLITE';
+ $('maplabel').textContent=sat?'IMAGENS DE SATÉLITE • ONLINE':'TRAÇADO GPS';
+ if(sat){initSatelliteMap();if(satelliteMap){setTimeout(()=>satelliteMap.invalidateSize(),100);if(lastPosition)satelliteMap.setView([lastPosition.lat,lastPosition.lng],17);}}
+}
+$('mapmode').onclick=()=>setMapMode(mapMode==='satellite'?'local':'satellite');
+$('recenter').onclick=()=>{if(lastPosition&&satelliteMap)satelliteMap.setView([lastPosition.lat,lastPosition.lng],17);else if(lastPosition)toast('Localização recebida; abra o mapa satélite para centralizar.');else toast('Aguardando uma posição GPS válida.')};
 $('start').onclick=()=>begin();
-function begin(){if(active)return;active=true;paused=false;meters=0;points=[];last=null;elapsedBefore=0;startAt=Date.now();$('tracktitle').textContent=sport+' em andamento';$('gpsstatus').textContent=sport==='Academia'?'● Cronômetro ativo • sem GPS':'◉ Solicitando GPS…';$('pause').textContent='Ⅱ PAUSAR';screen('track');if(timer)clearInterval(timer);timer=setInterval(update,1000);drawRoute();if(sport!=='Academia'){if(!navigator.geolocation){$('gpsstatus').textContent='GPS não disponível neste navegador.'}else{watch=navigator.geolocation.watchPosition(onGPS,e=>{$('gpsstatus').textContent=({1:'Permissão de localização negada.',2:'Sinal GPS indisponível; tente em área aberta.',3:'GPS demorou demais. Tentando novamente…'}[e.code]||'Erro de GPS: '+e.message)},{enableHighAccuracy:true,maximumAge:1000,timeout:20000})}}}
+function begin(){
+ if(active)return;
+ active=true;paused=false;meters=0;points=[];last=null;lastPosition=null;elapsedBefore=0;startAt=Date.now();
+ $('tracktitle').textContent=sport+' em andamento';$('gpsstatus').textContent=sport==='Academia'?'● Cronômetro ativo • sem GPS':'◉ Ativando GPS…';
+ $('pause').textContent='Ⅱ PAUSAR';screen('track');if(timer)clearInterval(timer);timer=setInterval(update,1000);drawRoute();
+ if(sport!=='Academia'){
+  if(!navigator.geolocation){$('gpsstatus').textContent='Este navegador não oferece geolocalização.';toast('GPS não disponível neste navegador.');return}
+  if(!window.isSecureContext){$('gpsstatus').textContent='GPS exige HTTPS. Abra o site publicado no GitHub Pages.';toast('Abra o NEXO FIT pelo link HTTPS.');return}
+  $('gpsstatus').textContent='Solicitando primeira posição GPS…';
+  navigator.geolocation.getCurrentPosition(pos=>{onGPS(pos);startWatchGPS()},err=>{gpsError(err);startWatchGPS()},{enableHighAccuracy:true,maximumAge:0,timeout:30000});
+ }
+}
 function seconds(){return elapsedBefore+(active&&!paused?(Date.now()-startAt)/1000:0)}
 function distance(a,b){const R=6371000,rad=x=>x*Math.PI/180,d1=rad(b.lat-a.lat),d2=rad(b.lng-a.lng),q=Math.sin(d1/2)**2+Math.cos(rad(a.lat))*Math.cos(rad(b.lat))*Math.sin(d2/2)**2;return 2*R*Math.atan2(Math.sqrt(q),Math.sqrt(1-q))}
-function onGPS(pos){if(!active||paused)return;const p={lat:pos.coords.latitude,lng:pos.coords.longitude,t:pos.timestamp,acc:pos.coords.accuracy};if(p.acc>80){$('gpsstatus').textContent='GPS com precisão baixa ('+Math.round(p.acc)+' m); buscando sinal…';return}if(last){const d=distance(last,p),dt=(p.t-last.t)/1000;if(d>2&&d<200&&dt>0){meters+=d;points.push({lat:p.lat,lng:p.lng});saveLive()}}else{points.push({lat:p.lat,lng:p.lng});saveLive()}last=p;$('gpsstatus').textContent='● GPS ativo • precisão ~'+Math.round(p.acc)+' m';drawRoute();update()}
+function startWatchGPS(){if(!active||paused||sport==='Academia'||!navigator.geolocation)return;if(watch!==null)navigator.geolocation.clearWatch(watch);watch=navigator.geolocation.watchPosition(onGPS,gpsError,{enableHighAccuracy:true,maximumAge:0,timeout:30000})}
+function gpsError(e){const messages={1:'Permissão negada. No navegador, toque no ícone ao lado do endereço → Permissões → Localização → Permitir.',2:'GPS sem sinal suficiente. Ative Localização e vá para um local aberto; o app continuará tentando.',3:'O GPS demorou a responder. Continue ao ar livre; o app continuará tentando.'};$('gpsstatus').textContent=messages[e.code]||('Falha de GPS: '+(e.message||'erro desconhecido'));if(e.code===1)toast('Ative a permissão de localização para o site.')}
+function onGPS(pos){
+ if(!active||paused)return;
+ const p={lat:pos.coords.latitude,lng:pos.coords.longitude,t:pos.timestamp||Date.now(),acc:pos.coords.accuracy||999};
+ if(!Number.isFinite(p.lat)||!Number.isFinite(p.lng))return;
+ lastPosition=p;
+ if(p.acc>100){$('gpsstatus').textContent='Precisão GPS baixa ('+Math.round(p.acc)+' m); buscando sinal melhor…';return}
+ if(last){const d=distance(last,p),dt=(p.t-last.t)/1000;if(dt>0&&d>=1.2&&d<250){meters+=d;points.push({lat:p.lat,lng:p.lng});saveLive()}}
+ else{points.push({lat:p.lat,lng:p.lng});saveLive()}
+ last=p;$('gpsstatus').textContent='GPS ativo • precisão ±'+Math.round(p.acc)+' m';
+ if(satelliteMap&&mapMode==='satellite'){const ll=[p.lat,p.lng];currentMarker.setLatLng(ll);routeLine.setLatLngs(points.map(q=>[q.lat,q.lng]));if(points.length===1)satelliteMap.setView(ll,17);else if(points.length%5===0)satelliteMap.panTo(ll,{animate:false})}
+ drawRoute();update();
+}
 function saveLive(){try{localStorage.setItem('nexofit_live_activity',JSON.stringify({sport,meters,points,seconds:seconds(),date:new Date().toISOString()}))}catch(e){}}
 function drawRoute(){const c=$('routecanvas'),ctx=c.getContext('2d'),r=c.getBoundingClientRect(),dpr=window.devicePixelRatio||1;c.width=Math.max(1,r.width*dpr);c.height=Math.max(1,r.height*dpr);ctx.scale(dpr,dpr);const w=r.width,h=r.height;ctx.fillStyle='#0c130e';ctx.fillRect(0,0,w,h);ctx.strokeStyle='#1c2b20';ctx.lineWidth=1;for(let x=-h;x<w+h;x+=31){ctx.beginPath();ctx.moveTo(x,0);ctx.lineTo(x+h,h);ctx.stroke()}for(let y=15;y<h;y+=31){ctx.beginPath();ctx.moveTo(0,y);ctx.lineTo(w,y);ctx.stroke()}ctx.strokeStyle='#243729';ctx.lineWidth=5;for(let i=0;i<5;i++){ctx.beginPath();ctx.moveTo(-20,h*(.16+i*.19));ctx.bezierCurveTo(w*.25,h*(.04+i*.2),w*.6,h*(.32+i*.1),w+20,h*(.13+i*.17));ctx.stroke()}if(points.length){let minLat=Math.min(...points.map(p=>p.lat)),maxLat=Math.max(...points.map(p=>p.lat)),minLng=Math.min(...points.map(p=>p.lng)),maxLng=Math.max(...points.map(p=>p.lng));if(maxLat-minLat<.0001){maxLat+=.0005;minLat-=.0005}if(maxLng-minLng<.0001){maxLng+=.0005;minLng-=.0005}const pad=38,dx=maxLng-minLng,dy=maxLat-minLat,scale=Math.min((w-pad*2)/dx,(h-pad*2)/dy);const xy=p=>[w/2+(p.lng-(minLng+maxLng)/2)*scale,h/2-(p.lat-(minLat+maxLat)/2)*scale];ctx.beginPath();points.forEach((p,i)=>{const [x,y]=xy(p);i?ctx.lineTo(x,y):ctx.moveTo(x,y)});ctx.strokeStyle='#a8ff3e';ctx.lineWidth=4;ctx.lineCap='round';ctx.lineJoin='round';ctx.shadowColor='#a8ff3e';ctx.shadowBlur=12;ctx.stroke();ctx.shadowBlur=0;const [x,y]=xy(points[points.length-1]);ctx.fillStyle='#a8ff3e';ctx.beginPath();ctx.arc(x,y,6,0,Math.PI*2);ctx.fill();ctx.strokeStyle='#f4ffe8';ctx.lineWidth=2;ctx.stroke()}else{ctx.fillStyle='#9ba99d';ctx.font='12px system-ui';ctx.textAlign='center';ctx.fillText('ROTA OFFLINE',w/2,h/2-5);ctx.font='10px system-ui';ctx.fillText('O traçado aparece quando o GPS registrar pontos',w/2,h/2+16)}}
 function update(){const s=seconds(),km=meters/1000;$('elapsed').textContent=clock(s);$('distance').textContent=km.toLocaleString('pt-BR',{minimumFractionDigits:2,maximumFractionDigits:2});$('pace').innerHTML=km>.03?fmt(s/60/km)+' <small>/km</small>':'— <small>/km</small>';$('speed').innerHTML=(s>0?fmt(km/(s/3600)):'0,0')+' <small>km/h</small>'}
-$('pause').onclick=()=>{if(!active)return;if(!paused){elapsedBefore+=Date.now()-startAt;paused=true;if(watch!==null)navigator.geolocation.clearWatch(watch);watch=null;$('pause').textContent='▶ RETOMAR';$('gpsstatus').textContent='Ⅱ Atividade pausada';saveLive()}else{paused=false;startAt=Date.now();$('pause').textContent='Ⅱ PAUSAR';if(sport!=='Academia'&&navigator.geolocation)watch=navigator.geolocation.watchPosition(onGPS,e=>$('gpsstatus').textContent='GPS: '+e.message,{enableHighAccuracy:true,maximumAge:1000,timeout:20000});$('gpsstatus').textContent='◉ Retomando GPS…'}};
+$('pause').onclick=()=>{if(!active)return;if(!paused){elapsedBefore+=Date.now()-startAt;paused=true;if(watch!==null&&navigator.geolocation)navigator.geolocation.clearWatch(watch);watch=null;$('pause').textContent='▶ RETOMAR';$('gpsstatus').textContent='Ⅱ Atividade pausada';saveLive()}else{paused=false;startAt=Date.now();$('pause').textContent='Ⅱ PAUSAR';$('gpsstatus').textContent='◉ Retomando GPS…';startWatchGPS()}};
 function stop(){if(watch!==null&&navigator.geolocation)navigator.geolocation.clearWatch(watch);watch=null;if(timer)clearInterval(timer);timer=null}
 let lastFinished=null;
 $('finish').onclick=()=>{if(!active)return;const secs=Math.floor(seconds());stop();active=false;paused=false;lastFinished={id:Date.now(),sport,seconds:secs,meters,points:points.slice(),date:new Date().toISOString()};activities.unshift(lastFinished);persist();localStorage.removeItem('nexofit_live_activity');refresh();renderSummary(lastFinished);screen('summary');toast('Treino salvo neste aparelho!')};
